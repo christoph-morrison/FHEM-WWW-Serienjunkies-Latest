@@ -1,0 +1,2 @@
+UPD 2020-05-13_09:45:28 938 lib/FHEM/Serienjunkies.pm 
+UPD 2020-05-13_09:49:10 87 FHEM/98_Serienjunkies.pm 
