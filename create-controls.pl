@@ -1,11 +1,12 @@
 #!/usr/bin/perl
 
+use warnings FATAL => 'all';
 use File::Basename;
 use POSIX qw(strftime);
 use strict;
 
 my @filenames = qw{
-    lib/FHEM/Serienjunkies.pm
+    lib/FHEM/WWW/Serienjunkies.pm
     FHEM/98_Serienjunkies.pm
 };
 
