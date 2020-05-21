@@ -68,6 +68,10 @@ Readonly our %ATTRIBUTE_HANDLER         => (
     },
 );
 
+Readonly our %SET_HANDLER               => (
+
+);
+
 ::Debug(Dumper(%ATTRIBUTE_HANDLER));
 
 ############################################################ FHEM API
@@ -126,6 +130,17 @@ sub handle_undefine {
 }
 
 sub handle_set {
+    if (defined $ATTRIBUTE_HANDLER{$attribute_name}) {
+        return &{$ATTRIBUTE_HANDLER{$attribute_name}{$verb}}(
+            {
+                q{device_name}      =>  $device_name,
+                q{verb}             =>  $verb,
+                q{attribute_name}   =>  $attribute_name,
+                q{attribute_value}  =>  $attribute_value,
+            }
+        );
+    }
+
     return;
 }
 

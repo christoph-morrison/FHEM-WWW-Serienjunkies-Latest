@@ -7,6 +7,7 @@ use strict;
 
 my @filenames = qw{
     lib/FHEM/WWW/Serienjunkies.pm
+    lib/FHEM/Debug.pm
     FHEM/98_Serienjunkies.pm
 };
 

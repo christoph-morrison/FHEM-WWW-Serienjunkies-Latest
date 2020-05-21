@@ -1,2 +1,3 @@
-UPD 2020-05-20_23:56:29 4943 lib/FHEM/WWW/Serienjunkies.pm 
+UPD 2020-05-21_13:51:03 8429 lib/FHEM/WWW/Serienjunkies.pm 
+UPD 2020-05-21_12:44:00 577 lib/FHEM/Debug.pm 
 UPD 2020-05-20_23:57:10 241 FHEM/98_Serienjunkies.pm 
