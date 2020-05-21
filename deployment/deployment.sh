@@ -79,7 +79,7 @@ function install_tools {
     echo '##########################'
     echo Installing base tools
 
-    $APT_BIN install -y htop tree vim git dnsutils telnet cpanminus build-essential curl wget
+    $APT_BIN install -y htop tree vim git dnsutils telnet cpanminus build-essential curl wget ntpdate
 }
 
 function set_time {
