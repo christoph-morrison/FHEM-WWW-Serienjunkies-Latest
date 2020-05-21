@@ -3,22 +3,74 @@ package FHEM::WWW::Serienjunkies;
 
 use strict;
 use warnings FATAL => 'all';
+use experimental qw( switch );
 use JSON::MaybeXS qw{decode_json};
 use Readonly;
 use FHEM::Meta;
-use English q{-no_match_vars};
+use FHEM::Debug qw{whisper};
+use English qw{-no_match_vars};
 use Data::Dumper;
 use Time::Seconds;
 use List::Util;
 use 5.014;
 
-Readonly our $VERSION                   => 0.010;
+Readonly our $VERSION                   => q{0.0.1};
 Readonly our $DEFAULT_DATA_URI          => q{https://serienjunkies.org/api/releases/latest};
-Readonly our $DEFAULT_REQUEST_INTERVAL  => 60;
+Readonly our $DEFAULT_REQUEST_INTERVAL  => 300;
 Readonly our $DEFAULT_TIMEOUT           => 10;
 Readonly our $DEFAULT_HTTP_METHOD       => q{GET};
-Readonly our @FILTER                    => qw{ .*Jordan.* .*Die.Wege.des.Herrn.*};
+Readonly our @VALID_INTERVALS           => qw{10 60 300 3600};
 
+############################################################ handle_attributes
+our %handle_attributes = (
+    q{filter}   => {
+        q{set} => sub {
+            my $parameters = shift;
+            set_request_timer($parameters->{device_name});
+            return;
+        },
+        q{del} => sub {
+            my $parameters = shift;
+            set_request_timer($parameters->{device_name});
+            return;
+        },
+    },
+    q{interval} => {
+        q{set} => sub {
+            my $parameters = shift;
+            return;
+        },
+        q{del} => sub {
+            my $parameters = shift;
+            return;
+        }
+    },
+    q{disable}  => {
+        q{set} => sub {
+            my $parameters = shift;
+
+            if ($parameters->{attribute_value} eq 1) {
+                disable_request_timer($parameters->{device_name});
+                return;
+            }
+
+            if ($parameters->{attribute_value} eq 0) {
+                set_request_timer($parameters->{device_name});
+                return;
+            }
+        },
+        q{del} => sub {
+            my $parameters = shift;
+
+            set_request_timer($parameters->{device_name});
+            return;
+        },
+    }
+);
+
+::Debug(Dumper(%handle_attributes));
+
+############################################################ FHEM API
 sub initialize {
 
     my $device_definition = shift;
@@ -28,11 +80,17 @@ sub initialize {
     $device_definition->{SetFn}         = \&handle_set;
     $device_definition->{GetFn}         = \&handle_get;
     $device_definition->{AttrFn}        = \&handle_attributes;
+    $device_definition->{AttrList}      = join(
+            q{ },
+            (
+                q{filter:textField-long},
+                q{disable:0,1},
+                q{interval:} . join ',', @VALID_INTERVALS,
+            )
+        ) . qq[ $::readingFnAttributes ];
 
     return FHEM::Meta::InitMod( __FILE__, $device_definition );
 }
-
-############################################################ FHEM API
 
 sub handle_define {
     my $global_definition   = shift;
@@ -57,7 +115,6 @@ sub handle_define {
     $global_definition->{VERSION}           = $VERSION;
     $global_definition->{DEFAULT_URI}       = $DEFAULT_DATA_URI;
     $global_definition->{REQUEST_INTERVAL}  = $DEFAULT_REQUEST_INTERVAL;
-    $global_definition->{FILTER}            = qq{@FILTER};
 
     set_request_timer($device_name);
 
@@ -77,7 +134,33 @@ sub handle_get {
 }
 
 sub handle_attributes {
-    return;
+    my $verb                = shift;
+    my $device_name         = shift;
+    my $attribute_name      = shift;
+    my $attribute_value     = shift;
+    my $global_definition    = get_global_definition($device_name);
+
+    whisper(Dumper({
+        q{device_name}      =>  $device_name,
+        q{verb}             =>  $verb,
+        q{attribute_name}   =>  $attribute_name,
+        q{attribute_value}  =>  $attribute_value,
+    }));
+
+    if (!List::Util::any { $verb eq $ARG } qw{ set del }) {
+        return qq{[$device_name] Action '$verb' is neither set nor del.};
+    }
+
+    if (defined $handle_attributes{$attribute_name}) {
+        return &{$handle_attributes{$attribute_name}{$verb}}(
+            {
+                q{device_name}      =>  $device_name,
+                q{verb}             =>  $verb,
+                q{attribute_name}   =>  $attribute_name,
+                q{attribute_value}  =>  $attribute_value,
+            }
+        );
+    }
 }
 
 ############################################################ timer
@@ -87,7 +170,7 @@ sub set_request_timer {
     my $global_definition = get_global_definition($device_name);
 
     # reset timer
-    ::RemoveInternalTimer( $global_definition, \&set_request_timer );
+    disable_request_timer($device_name);
 
     # update next update timestamp
     my $next_update = int(time() + $global_definition->{REQUEST_INTERVAL});
@@ -103,6 +186,18 @@ sub set_request_timer {
     ::InternalTimer( $next_update, \&set_request_timer, $device_name );
 
     return 1;
+}
+
+sub disable_request_timer {
+    my $device_name = shift;
+    my $global_definition = get_global_definition($device_name);
+
+    ::RemoveInternalTimer( $global_definition, \&set_request_timer );
+    # save information for the interested reader
+    $global_definition->{NEXT_UPDATE_TS} = q{disabled};
+    $global_definition->{NEXT_UPDATE_HR} = q{disabled};
+
+    return;
 }
 
 sub request_data {
@@ -135,8 +230,8 @@ sub parse_response_data {
 
     if ($EVAL_ERROR || !$eval_status) {
         #   todo Error handling in case the JSON could not be parsed
-        ::Debug($EVAL_ERROR);
-        ::Debug($eval_status);
+        whisper($EVAL_ERROR);
+        whisper($eval_status);
     }
 
     # reset readings
@@ -145,19 +240,26 @@ sub parse_response_data {
     # create a reading for every item
     ::readingsBeginUpdate($global_definition);
 
+    my @filter = split qr{ \s+ }xsm, ::AttrVal($device_name, q{filter}, q{});
+    whisper(q{Filter: } . Dumper(@filter));
+
+    my $found_items = 0;
+
     for my $publish_date (keys %{$response_content}) {
-        ::Debug($publish_date);
+        whisper($publish_date);
         # create a reading for every item
         for my $published_item (@{$response_content->{$publish_date}}) {
 
-            if (List::Util::any { $published_item->{name} =~ qr/$ARG/xsm } @FILTER) {
-                ::Debug(qq{\t\t Found: } . $published_item->{name});
+            if (List::Util::any { $published_item->{name} =~ qr{$ARG}xsm } @filter) {
+                whisper(qq{\t\t Found: } . $published_item->{name});
                 ::readingsBulkUpdate($global_definition, $published_item->{id}, $published_item->{name});
+                ++$found_items;
             }
 
         }
     }
 
+    ::readingsBulkUpdate($global_definition, q{state}, $found_items);
     ::readingsEndUpdate( $global_definition, 1 );
 
 
