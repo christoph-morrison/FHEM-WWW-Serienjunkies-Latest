@@ -22,7 +22,7 @@ Readonly our $DEFAULT_HTTP_METHOD       => q{GET};
 Readonly our @VALID_INTERVALS           => qw{10 60 300 3600};
 
 ############################################################ handle_attributes
-our %handle_attributes = (
+Readonly our %ATTRIBUTE_HANDLER         => (
     q{filter}   => {
         q{set} => sub {
             my $parameters = shift;
@@ -43,18 +43,18 @@ our %handle_attributes = (
         q{del} => sub {
             my $parameters = shift;
             return;
-        }
+        },
     },
     q{disable}  => {
         q{set} => sub {
             my $parameters = shift;
 
-            if ($parameters->{attribute_value} eq 1) {
+            if ($parameters->{attribute_value} == 1) {
                 disable_request_timer($parameters->{device_name});
                 return;
             }
 
-            if ($parameters->{attribute_value} eq 0) {
+            if ($parameters->{attribute_value} == 0) {
                 set_request_timer($parameters->{device_name});
                 return;
             }
@@ -65,10 +65,10 @@ our %handle_attributes = (
             set_request_timer($parameters->{device_name});
             return;
         },
-    }
+    },
 );
 
-::Debug(Dumper(%handle_attributes));
+::Debug(Dumper(%ATTRIBUTE_HANDLER));
 
 ############################################################ FHEM API
 sub initialize {
@@ -85,7 +85,7 @@ sub initialize {
             (
                 q{filter:textField-long},
                 q{disable:0,1},
-                q{interval:} . join ',', @VALID_INTERVALS,
+                q{interval:} . join q{,}, @VALID_INTERVALS,
             )
         ) . qq[ $::readingFnAttributes ];
 
@@ -151,8 +151,8 @@ sub handle_attributes {
         return qq{[$device_name] Action '$verb' is neither set nor del.};
     }
 
-    if (defined $handle_attributes{$attribute_name}) {
-        return &{$handle_attributes{$attribute_name}{$verb}}(
+    if (defined $ATTRIBUTE_HANDLER{$attribute_name}) {
+        return &{$ATTRIBUTE_HANDLER{$attribute_name}{$verb}}(
             {
                 q{device_name}      =>  $device_name,
                 q{verb}             =>  $verb,
@@ -216,7 +216,6 @@ sub request_data {
 
     return;
 }
-
 
 sub parse_response_data {
     my $request_params      =   shift;
