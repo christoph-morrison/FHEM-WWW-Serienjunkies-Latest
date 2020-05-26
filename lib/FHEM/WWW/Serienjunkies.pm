@@ -186,7 +186,7 @@ sub set_request_timer {
     # reset timer
     disable_request_timer($device_name);
 
-    if ($global_definition->{REQUEST_INTERVAL} eq "disabled") {
+    if ($global_definition->{REQUEST_INTERVAL} eq q{disabled}) {
         whisper(q{Update is disabled, stop request});
         return;
     }
