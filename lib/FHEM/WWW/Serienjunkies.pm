@@ -38,10 +38,21 @@ Readonly our %ATTRIBUTE_HANDLER         => (
     q{interval} => {
         q{set} => sub {
             my $parameters = shift;
+
+            if (!List::Util::any {$parameters->{attribute_value} == $ARG} @VALID_INTERVALS) {
+                return qq[$parameters->{attribute_value} is not a valid interval. Choose one of @VALID_INTERVALS];
+            }
+
+            # update request interval, set new timer
+            $parameters->{global_definition}->{REQUEST_INTERVAL} = $parameters->{attribute_value};
+            set_request_timer($parameters->{device_name});
+
             return;
         },
         q{del} => sub {
             my $parameters = shift;
+            $parameters->{REQUEST_INTERVAL} = $DEFAULT_REQUEST_INTERVAL;
+            set_request_timer($parameters->{device_name});
             return;
         },
     },
@@ -158,10 +169,11 @@ sub handle_attributes {
     if (defined $ATTRIBUTE_HANDLER{$attribute_name}) {
         return &{$ATTRIBUTE_HANDLER{$attribute_name}{$verb}}(
             {
-                q{device_name}      =>  $device_name,
-                q{verb}             =>  $verb,
-                q{attribute_name}   =>  $attribute_name,
-                q{attribute_value}  =>  $attribute_value,
+                q{global_definition}    => $global_definition,
+                q{device_name}          =>  $device_name,
+                q{verb}                 =>  $verb,
+                q{attribute_name}       =>  $attribute_name,
+                q{attribute_value}      =>  $attribute_value,
             }
         );
     }
@@ -171,6 +183,7 @@ sub handle_attributes {
 
 sub set_request_timer {
     my $device_name = shift;
+    my $interval = shift;
     my $global_definition = get_global_definition($device_name);
 
     # reset timer
