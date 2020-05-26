@@ -21,7 +21,7 @@ Readonly our $DEFAULT_TIMEOUT           => 10;
 Readonly our $DEFAULT_HTTP_METHOD       => q{GET};
 Readonly our @VALID_INTERVALS           => qw{10 60 300 3600};
 
-############################################################ handle_attributes
+############################################################ handle
 Readonly our %ATTRIBUTE_HANDLER         => (
     q{filter}   => {
         q{set} => sub {
