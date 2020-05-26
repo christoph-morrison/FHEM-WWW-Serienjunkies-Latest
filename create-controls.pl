@@ -29,5 +29,5 @@ foreach $filename (@filenames)
 
     my $filesize = $statOutput[7];
 
-    printf("UPD $filetime $filesize $filename \n");
+    printf("UPD $filetime $filesize $filename\n");
 }
