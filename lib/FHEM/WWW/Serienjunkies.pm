@@ -22,7 +22,7 @@ Readonly our $DEFAULT_HTTP_METHOD       => q{GET};
 Readonly our @VALID_INTERVALS           => qw{10 60 300 3600};
 
 ############################################################ handle
-Readonly our %ATTRIBUTE_HANDLER         => (
+Readonly our %ATTRIBUTE_HANDLER  => (
     q{filter}   => {
         q{set} => sub {
             my $parameters = shift;
@@ -61,29 +61,26 @@ Readonly our %ATTRIBUTE_HANDLER         => (
             my $parameters = shift;
 
             if ($parameters->{attribute_value} == 1) {
-                disable_request_timer($parameters->{device_name});
+                disable_device($parameters->{device_name});
                 return;
             }
 
             if ($parameters->{attribute_value} == 0) {
-                set_request_timer($parameters->{device_name});
+                enable_device($parameters->{device_name});
                 return;
             }
         },
         q{del} => sub {
             my $parameters = shift;
-
-            set_request_timer($parameters->{device_name});
+            enable_device($parameters->{device_name});
             return;
         },
     },
 );
 
-Readonly our %SET_HANDLER               => (
+Readonly our %SET_HANDLER => (
 
 );
-
-::Debug(Dumper(%ATTRIBUTE_HANDLER));
 
 ############################################################ FHEM API
 sub initialize {
@@ -169,7 +166,7 @@ sub handle_attributes {
     if (defined $ATTRIBUTE_HANDLER{$attribute_name}) {
         return &{$ATTRIBUTE_HANDLER{$attribute_name}{$verb}}(
             {
-                q{global_definition}    => $global_definition,
+                q{global_definition}    =>  $global_definition,
                 q{device_name}          =>  $device_name,
                 q{verb}                 =>  $verb,
                 q{attribute_name}       =>  $attribute_name,
@@ -188,6 +185,11 @@ sub set_request_timer {
 
     # reset timer
     disable_request_timer($device_name);
+
+    if ($global_definition->{REQUEST_INTERVAL} eq "disabled") {
+        whisper(q{Update is disabled, stop request});
+        return;
+    }
 
     # update next update timestamp
     my $next_update = int(time() + $global_definition->{REQUEST_INTERVAL});
@@ -211,8 +213,8 @@ sub disable_request_timer {
 
     ::RemoveInternalTimer( $global_definition, \&set_request_timer );
     # save information for the interested reader
-    $global_definition->{NEXT_UPDATE_TS} = q{disabled};
-    $global_definition->{NEXT_UPDATE_HR} = q{disabled};
+    $global_definition->{NEXT_UPDATE_TS}    = q{disabled};
+    $global_definition->{NEXT_UPDATE_HR}    = q{disabled};
 
     return;
 }
@@ -283,6 +285,32 @@ sub parse_response_data {
 }
 
 ############################################################ helper subroutines
+sub disable_device {
+    my ($device_name) = @ARG;
+    my $global_definition = get_global_definition($device_name);
+
+    # don't do any further requests
+    disable_request_timer($device_name);
+
+    # update interal state, set STATE to inactive for IsDisabled() support
+    $global_definition->{REQUEST_INTERVAL} = q{disabled};
+    $global_definition->{STATE} = q{inactive};
+
+    return;
+}
+
+sub enable_device {
+    my ($device_name) = @ARG;
+    my $global_definition = get_global_definition($device_name);
+
+    # update internal save request intveral
+    $global_definition->{REQUEST_INTERVAL} =
+        ::AttrVal($device_name, q{interval}, $DEFAULT_REQUEST_INTERVAL);
+
+    # restart internal timer
+    set_request_timer($device_name);
+    return;
+}
 
 ## no critic (ProhibitPackageVars)
 sub get_global_definition {
