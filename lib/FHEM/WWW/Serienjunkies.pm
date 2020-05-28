@@ -34,7 +34,7 @@ Readonly our @VALID_INTERVALS           => qw{10 60 300 3600};
 
 ############################################################ handle
 Readonly our %ATTRIBUTES  => (
-    q{interval}              => {
+    q{interval}                 => {
         q{set} => sub {
             my $parameters = shift;
 
@@ -56,7 +56,7 @@ Readonly our %ATTRIBUTES  => (
         },
         q{def} => join(q{,}, @VALID_INTERVALS),
     },
-    q{disable}               => {
+    q{disable}                  => {
         q{def} => q{0,1},
         q{set} => sub {
             my $parameters = shift;
@@ -77,7 +77,7 @@ Readonly our %ATTRIBUTES  => (
             return;
         },
     },
-    q{filter_name}           => {
+    q{filter-by-name}           => {
         q{set}   => sub {
             my $parameters = shift;
             set_request_timer($parameters->{device_name});
@@ -90,7 +90,7 @@ Readonly our %ATTRIBUTES  => (
         },
         q{get}   => sub {
             my $parameters = shift;
-            return ::AttrVal($parameters->{device_name}, q{filter_name}, undef);
+            return ::AttrVal($parameters->{device_name}, q{filter-by-name}, undef);
         },
         q{apply} => sub {
             my $parameters = shift;
@@ -99,7 +99,7 @@ Readonly our %ATTRIBUTES  => (
         },
         q{def}   => q{textField-long},
     },
-    q{filter_language}       => {
+    q{filter-by-language}       => {
         q{set} => sub {
             my $parameters = shift;
             if (!List::Util::any {$parameters->{attribute_value} eq $ARG} keys %{$VALID_FILTER_LANGUAGES}) {
@@ -115,14 +115,15 @@ Readonly our %ATTRIBUTES  => (
         },
         q{def} => join q{,}, keys %{$VALID_FILTER_LANGUAGES},
     },
-    q{disable-content-cache} => {
+    q{disable-content-cache}    => {
         q{def}   => q{0,1},
         q{set}   => sub {
-            #todo checks
+            my $parameters = shift;
+            set_request_timer($parameters->{device_name}) if ($parameters->{attribute_value});
             return;
         },
         q{del}   => sub {
-            #todo checks
+            # todo
             return;
         },
         q{apply} => sub {
@@ -133,11 +134,12 @@ Readonly our %ATTRIBUTES  => (
     q{disable-request-cache} => {
         q{def}   => q{0,1},
         q{set}   => sub {
-            #todo checks
+            my $parameters = shift;
+            set_request_timer($parameters->{device_name}) if ($parameters->{attribute_value});
             return;
         },
         q{del}   => sub {
-            #todo checks
+            # todo
             return;
         },
         q{apply} => sub {
@@ -188,8 +190,8 @@ sub handle_define {
     $global_definition->{VERSION}           = $VERSION;
     $global_definition->{DEFAULT_URI}       = $DEFAULT_DATA_URI;
     $global_definition->{REQUEST_INTERVAL}  = $DEFAULT_REQUEST_INTERVAL;
-    $global_definition->{CONTENT_DIGEST}    = q{null};
-    $global_definition->{ETag}              = q{null};
+    $global_definition->{CONTENT_DIGEST}    = q{};
+    $global_definition->{ETag}              = q{};
     $global_definition->{LAST_MODIFIED}     = q{};
 
     whisper(join q{,}, keys %{$VALID_FILTER_LANGUAGES});
@@ -267,7 +269,6 @@ sub handle_attributes {
 
 sub set_request_timer {
     my $device_name = shift;
-    my $interval = shift;
     my $global_definition = get_global_definition($device_name);
 
     # reset timer
@@ -389,8 +390,8 @@ sub parse_response_data {
 
     # seed filter language with the default value: every language
     my $filter_language = q{.*};
-    if (::AttrVal($device_name, q{filter_language}, undef)) {
-        $filter_language = ::AttrVal($device_name, q{filter_language}, $DEFAULT_FILTER_LANGUAGE);
+    if (::AttrVal($device_name, q{filter-by-language}, undef)) {
+        $filter_language = ::AttrVal($device_name, q{filter-by-language}, $DEFAULT_FILTER_LANGUAGE);
         $filter_language = lc $VALID_FILTER_LANGUAGES->{$filter_language};
     }
     my $filter_language_re = qr{$filter_language}xims;
@@ -398,7 +399,7 @@ sub parse_response_data {
     whisper($filter_language);
 
 
-    my @filter = split qr{ \s+ }xsm, ::AttrVal($device_name, q{filter_name}, (q{.*}));
+    my @filter = split qr{ \s+ }xsm, ::AttrVal($device_name, q{filter-by-name}, (q{.*}));
 
     if ($EVAL_ERROR || !$eval_status) {
         #   todo Error handling in case the JSON could not be parsed
