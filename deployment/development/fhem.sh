@@ -50,7 +50,10 @@ function add_sudoers {
 }
 
 function perl_modules {
-    cpanm install App::cpanoutdated Perl::PrereqScanner::NotQuiteLite IO::Socket::INET6 Socket6 Cpanel::JSON::XS JSON::MaybeXS
+    cpanm install \
+            App::cpanoutdated Perl::PrereqScanner::NotQuiteLite IO::Socket::INET6 \
+            Socket6 Cpanel::JSON::XS JSON::MaybeXS HTTP::Headers::Util \
+            Text::CSV Text::Trim
 }
 
 perl_modules
