@@ -6,4 +6,4 @@ So in [FHEM/](FHEM/) (the legacy library path) just exists a very [minimal loade
 
 Surprisingly, this works and supports the common idioms from the legacy module development.
 
-See als the [list](device-list.md) for the testing device for further entertainment.
+See als the [list](reverse-engineering/device-list.md) for the testing device for further entertainment.
