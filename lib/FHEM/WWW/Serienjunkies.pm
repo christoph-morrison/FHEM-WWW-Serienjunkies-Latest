@@ -16,6 +16,9 @@ use Digest::MD5;
 use Text::CSV;
 use Text::Trim;
 use HTTP::Headers::Util;
+
+## core modules
+use File::Temp;
 use Storable;
 use 5.014;
 
@@ -24,6 +27,7 @@ Readonly our $DEFAULT_DATA_URI          => q{https://serienjunkies.org/api/relea
 Readonly our $DEFAULT_REQUEST_INTERVAL  => 300;
 Readonly our $DEFAULT_TIMEOUT           => 10;
 Readonly our $DEFAULT_HTTP_METHOD       => q{GET};
+Readonly our @AVAILABLE_FILTERS         => qw{filter-by-name filter-by-language};
 Readonly our $DEFAULT_FILTER            => q{};
 Readonly our $VALID_FILTER_LANGUAGES    => {
     q{DE} => q{GERMAN},
@@ -31,6 +35,8 @@ Readonly our $VALID_FILTER_LANGUAGES    => {
 };
 Readonly our $DEFAULT_FILTER_LANGUAGE   => q{DE};
 Readonly our @VALID_INTERVALS           => qw{10 60 300 3600};
+Readonly our $CACHE_FILE_TEMPLATE       => q{serienjunkies.XXXXXXXXX};
+Readonly our $CACHE_FILE_EXT            => q{.cache};
 
 ############################################################ handle
 Readonly our %ATTRIBUTES  => (
@@ -94,8 +100,28 @@ Readonly our %ATTRIBUTES  => (
         },
         q{apply} => sub {
             my $parameters = shift;
-            return;
+            whisper(Dumper({
+                q{message}    => q{apply filter-by-name},
+            }));
 
+=for old
+            my $data            = $parameters->{data};
+            my @filter_values   = split qr{ \s+ }xsm, ::AttrVal($parameters->{device_name}, q{filter-by-name}, (q{.*}));
+
+            if (List::Util::any { $published_item->{name} =~ qr{$ARG}xsm } @filter) {
+                whisper(qq{\t\t Found: } . $published_item->{name});
+
+                # skip if a language filter is set and the language does not match
+                if ($filter_language && $published_item->{language} !~ $filter_language_re ) {
+                    next;
+                }
+
+                # update reading
+                ::readingsBulkUpdate($global_definition, $published_item->{id}, $published_item->{name});
+                ++$found_items;
+            }
+=cut
+            return q{apply_filter_by_name};
         },
         q{def}   => q{textField-long},
     },
@@ -113,7 +139,23 @@ Readonly our %ATTRIBUTES  => (
             set_request_timer($parameters->{device_name});
             return;
         },
-        q{def} => join q{,}, keys %{$VALID_FILTER_LANGUAGES},
+        q{def} => join(q{,}, keys %{$VALID_FILTER_LANGUAGES}),
+        q{apply} => sub {
+            my $parameter = shift;
+=for old
+            # seed filter language with the default value: every language
+            my $filter_language = q{.*};
+            if (::AttrVal($device_name, q{filter-by-language}, undef)) {
+                $filter_language = ::AttrVal($device_name, q{filter-by-language}, $DEFAULT_FILTER_LANGUAGE);
+                $filter_language = lc $VALID_FILTER_LANGUAGES->{$filter_language};
+            }
+            my $filter_language_re = qr{$filter_language}xims;
+
+            whisper($filter_language);
+
+=cut
+            return q{apply_filter_by_lang};
+        }
     },
     q{disable-content-cache}    => {
         q{def}   => q{0,1},
@@ -131,7 +173,7 @@ Readonly our %ATTRIBUTES  => (
             return;
         },
     },
-    q{disable-request-cache} => {
+    q{disable-request-cache}    => {
         q{def}   => q{0,1},
         q{set}   => sub {
             my $parameters = shift;
@@ -159,6 +201,7 @@ sub initialize {
     $device_definition->{SetFn}         = \&handle_set;
     $device_definition->{GetFn}         = \&handle_get;
     $device_definition->{AttrFn}        = \&handle_attributes;
+    $device_definition->{NotifyFn}      = \&handle_notify;
     $device_definition->{AttrList}      = get_attributes({
         q{attributes}         => \%ATTRIBUTES,
         q{default_attributes} => 1,
@@ -186,6 +229,14 @@ sub handle_define {
         return q{Syntax: define <name> Serienjunkies};
     }
 
+    # get a temporary file for the cache
+    my (undef, $cache_file) = File::Temp::tempfile(
+        $CACHE_FILE_TEMPLATE,
+        OPEN   => 0,
+        SUFFIX => $CACHE_FILE_EXT,
+        DIR    => '/tmp',
+    );
+
     $global_definition->{NAME}              = $device_name;
     $global_definition->{VERSION}           = $VERSION;
     $global_definition->{DEFAULT_URI}       = $DEFAULT_DATA_URI;
@@ -193,6 +244,8 @@ sub handle_define {
     $global_definition->{CONTENT_DIGEST}    = q{};
     $global_definition->{ETag}              = q{};
     $global_definition->{LAST_MODIFIED}     = q{};
+    $global_definition->{CACHE_FILE}        = $cache_file;
+    $global_definition->{NOTIFYDEV}         = $device_name;
 
     whisper(join q{,}, keys %{$VALID_FILTER_LANGUAGES});
 
@@ -265,6 +318,17 @@ sub handle_attributes {
     }
 }
 
+sub handle_notify {
+    my ($global_definition, undef) = @ARG;
+    whisper(q{notify called});
+
+    whisper(Dumper({
+        q{message}      => q{Notify called!},
+        q{caller_name}  => $global_definition->{NAME},
+    }));
+
+    return;
+}
 ############################################################ timer
 
 sub set_request_timer {
@@ -316,8 +380,7 @@ sub request_data {
     my @additional_headers = ();
 
     # add If-None-Match if ETag is set and the request cache was not disabled by attribute
-    my $force_update = ::AttrVal($device_name, q{disable-request-cache}, undef);
-    if (!$force_update && defined $global_definition->{ETag}) {
+    if (!::AttrVal($device_name, q{disable-request-cache}, 0) && defined $global_definition->{ETag}) {
         push(@additional_headers, qq[If-None-Match: "$global_definition->{ETag}"]);
     }
 
@@ -342,75 +405,73 @@ sub parse_response_data {
     my $device_name         =   $request_params->{device_name};
     my $global_definition   =   get_global_definition($device_name);
     my $response_content;
-    my $force_update        = ::AttrVal($device_name, q{disable-content-cache}, undef);
 
+    # request was cached, do nothing but update device state
     if ($request_params->{code} == 304) {
-        ::readingsSingleUpdate($global_definition, q{state}, q{not modified}, 1);
-        whisper(Dumper({
-            q{message}      => q{If Non-Match said content was not modified. Skipping.},
-            q{force?}       => $force_update,
-            q{raw}          => $request_params->{httpheader},
-        }));
+        whisper(q{http return code is 304, nothing todo});
+        ::readingsSingleUpdate($global_definition, q{state}, q{not modified}, 0);
         return;
     }
 
-
-    my $headers_ref = undef;
-    if (defined $request_params->{httpheader}) {
-        $headers_ref = parse_http_header($request_params->{httpheader});
-        $global_definition->{ETag} = $headers_ref->{ETag}{id} if (defined $headers_ref->{ETag}{id});
+    # save ETag if request cache is not deactivated
+    if (!::AttrVal($device_name, q{disable-request-cache}, 0) && defined $request_params->{httpheader}) {
+        whisper(q{request cache updated});
+        my $headers_ref = parse_http_header($request_params->{httpheader});
+        my $etag = $headers_ref->{ETag}{id} // undef;
+        if ($etag ne $global_definition->{ETag}) {
+            whisper(qq[Found new ETag $etag]);
+            $global_definition->{ETag} = $etag;
+        }
     }
 
-    whisper(Dumper(\{
-        q{title}  => q{HTTP headers parsed:},
-        q{values} => Dumper($headers_ref),
-        q{raw}    => $request_params->{httpheader},
-    }));
+    # if content cache ist not deactivated, skip further handling
+    my $response_digest = Digest::MD5::md5_hex($response_data);
 
-    my $md5sum = Digest::MD5::md5_hex($response_data);
+    if (!::AttrVal($device_name, q{disable-content-cache}, 0)) {
+        my $cached_digest   = $global_definition->{CONTENT_DIGEST} // undef;
 
-    if (!$force_update && $md5sum eq $global_definition->{CONTENT_DIGEST}) {
-        ::readingsSingleUpdate($global_definition, q{state}, q{not modified}, 1);
-
-        whisper(Dumper({
-            q{message}      => q{Content was not modified. Skipping.},
-            q{old md5}      => $global_definition->{CONTENT_DIGEST},
-            q{request md5}  => $md5sum,
-            q{force?}       => $force_update,
-        }));
-        return;
+        if ($cached_digest eq $response_digest) {
+            whisper(q{cache not modified});
+            ::readingsSingleUpdate($global_definition, q{state}, q{not modified}, 0);
+            return;
+        }
     }
 
-
-
+    # update save information
     $global_definition->{LAST_MODIFIED} = localtime time;
-    $global_definition->{CONTENT_DIGEST} = $md5sum;
+    $global_definition->{CONTENT_DIGEST} = $response_digest;
 
+    # parse response json into a perl data structure
     my $eval_status = eval { $response_content = JSON::MaybeXS::decode_json($response_data) };
-
-    # seed filter language with the default value: every language
-    my $filter_language = q{.*};
-    if (::AttrVal($device_name, q{filter-by-language}, undef)) {
-        $filter_language = ::AttrVal($device_name, q{filter-by-language}, $DEFAULT_FILTER_LANGUAGE);
-        $filter_language = lc $VALID_FILTER_LANGUAGES->{$filter_language};
-    }
-    my $filter_language_re = qr{$filter_language}xims;
-
-    whisper($filter_language);
-
-
-    my @filter = split qr{ \s+ }xsm, ::AttrVal($device_name, q{filter-by-name}, (q{.*}));
-
     if ($EVAL_ERROR || !$eval_status) {
         #   todo Error handling in case the JSON could not be parsed
         whisper($EVAL_ERROR);
         whisper($eval_status);
     }
 
-    # reset readings
+    # store it
+    store(\$response_data, $global_definition->{CACHE_FILE});
+
+    # trigger self for further processing
+    whisper(q{Trigger self for further processing});
+    ::readingsSingleUpdate($global_definition, q{state}, q{new data received}, 1);
+    # ::DoTrigger($device_name, undef);
+
+
+=for old readings
+
+    should be refactored into other functions
+
+    # apply any selected filter
+    apply_filters($device_name, \$response_content, );
+
+    # clear _all_ readings
     delete $global_definition->{READINGS};
 
     # create a reading for every item
+
+
+
     ::readingsBeginUpdate($global_definition);
 
     my $found_items = 0;
@@ -420,18 +481,6 @@ sub parse_response_data {
         # create a reading for every item
         for my $published_item (@{$response_content->{$publish_date}}) {
 
-            if (List::Util::any { $published_item->{name} =~ qr{$ARG}xsm } @filter) {
-                whisper(qq{\t\t Found: } . $published_item->{name});
-
-                # skip if a language filter is set and the language does not match
-                if ($filter_language && $published_item->{language} !~ $filter_language_re ) {
-                    next;
-                }
-
-                # update reading
-                ::readingsBulkUpdate($global_definition, $published_item->{id}, $published_item->{name});
-                ++$found_items;
-            }
 
         }
     }
@@ -439,6 +488,7 @@ sub parse_response_data {
     ::readingsBulkUpdate($global_definition, q{state}, $found_items);
     ::readingsEndUpdate( $global_definition, 1 );
 
+=cut
 
     return;
 }
@@ -564,6 +614,30 @@ sub enable_device {
     # restart internal timer
     set_request_timer($device_name);
     return;
+}
+
+sub apply_filters {
+    my $device_name = shift;
+    my $data_ref    = shift;
+    my $filtered_ref;
+    my $filter_val;
+
+    for my $filter (@AVAILABLE_FILTERS) {
+        whisper(q{***** FILTER *****});
+        $filter_val = ::AttrVal($device_name, $filter, undef);
+        whisper(Dumper($ATTRIBUTES{$filter}));
+        if (ref $ATTRIBUTES{$filter}{apply} eq q{CODE}) {
+            whisper(Dumper({
+                q{applied filter}   => $filter,
+                q{filter_val}       => $filter_val,
+                q{return}           => $ATTRIBUTES{$filter}{apply}->({
+                        q{data}        => $data_ref,
+                        q{device_name} => $device_name,
+                    }),
+                },
+            ));
+        }
+    }
 }
 
 ## no critic (ProhibitPackageVars)
